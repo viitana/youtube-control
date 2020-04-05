@@ -1,0 +1,20 @@
+{
+  "name": "Local youtube remote",
+  "version": "0.1",
+  "description": "Control Youtube playback remotely on a local network",
+  "manifest_version": 2,
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+		{
+			"matches": ["http://www.youtube.com/watch*", "http://youtube.com/watch*", "https://www.youtube.com/watch*", "https://youtube.com/watch*"],
+			"js": ["content.js"],
+			"run_at": "document_start"
+		}
+  ],
+  "permissions": [
+    "nativeMessaging"
+  ]
+}
