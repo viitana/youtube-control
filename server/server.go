@@ -11,8 +11,48 @@ var socket *net.TCPListener
 var should_close = false
 var connections = make(map[string]*net.TCPConn)
 
+// Go has no way to identify private/local ip addresses so we do that manually
+var private_ip_ranges_parsed []*net.IPNet
+var private_ip_ranges = [8]string{
+	"127.0.0.0/8",    // IPv4 loopback
+	"10.0.0.0/8",     // RFC1918
+	"172.16.0.0/12",  // RFC1918
+	"192.168.0.0/16", // RFC1918
+	"169.254.0.0/16", // RFC3927 link-local
+	"::1/128",        // IPv6 loopback
+	"fe80::/10",      // IPv6 link-local
+	"fc00::/7",       // IPv6 unique local addr
+}
+
+func init_private_ip_ranges() {
+	for _, cidr := range private_ip_ranges {
+		_, block, _ := net.ParseCIDR(cidr)
+		private_ip_ranges_parsed = append(private_ip_ranges_parsed, block)
+	}
+}
+
+func is_private_ip(ip net.IP) bool {
+	// Check for loopbacks, IPv6 link-local and unique-local addresses
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	// Check known private IP ranges
+	for _, block := range private_ip_ranges_parsed {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Start up a TCP server and listening for extension messages
 func create_server(address_str string) error {
+	if local_only {
+		init_private_ip_ranges()
+	}
+
 	address, err := net.ResolveTCPAddr("tcp", address_str)
 
 	if err != nil {
@@ -20,113 +60,135 @@ func create_server(address_str string) error {
 	}
 
 	socket, err = net.ListenTCP("tcp", address)
-	
+
 	if err != nil {
 		return fmt.Errorf("Unable to create socket: %s", address_str)
 	}
 
-  defer socket.Close()
+	s := fmt.Sprintf("Listening TCP on %s\n", address_str)
+	log.Write([]byte(s))
 
-  // Start accepting connections via TCP
-  go server_accept()
+	defer socket.Close()
 
-  // Receive extension messages
+	// Start accepting connections via TCP
+	go server_accept()
+
+	// Receive extension messages
 	return receive_native()
 }
 
 // Receive native messages from extension
 func receive_native() error {
 	for {
-    msg, err := read_native()
-    
-    if err != nil {
-      return err
-    }
+		msg, err := read_native()
+
+		if err != nil {
+			return err
+		}
 
 		switch msg.Type {
-    case "update":
-      server_send(msg)
-      break
-    case "close":
-      if !should_close {
-        should_close = true
-      }
-      return fmt.Errorf("Received close message: %s", msg.Data.(string))
-    }
+		case "update":
+			server_send(msg)
+			break
+		case "close":
+			if !should_close {
+				should_close = true
+			}
+			return fmt.Errorf("Received close message: %s", msg.Data.(string))
+		}
 	}
 }
 
 // Receive incoming TCP connections
 // Runs as a goroutine per-server
 func server_accept() {
-  for {
-    connection, err := socket.AcceptTCP()
-    if err != nil {
-      if !should_close {
-        log.Write([]byte("Failed to accept incoming TCP connection\n"))
-      }
-      os.Exit(1)
-    }
+	log.Write([]byte("Accepting TCP connections\n"))
 
-    address_str := connection.RemoteAddr().String()
-    connections[address_str] = connection
+	for {
+		connection, err := socket.AcceptTCP()
+		if err != nil {
+			if !should_close {
+				log.Write([]byte("Failed to accept incoming TCP connection\n"))
+			}
+			os.Exit(1)
+		}
 
-    go server_receive(connection)
-  }
+		address_str := connection.RemoteAddr().String()
+		ip := net.ParseIP(address_str)
+
+		if local_only && !is_private_ip(ip) {
+			s := fmt.Sprintf("Ignored public TCP connection from %s\n", address_str)
+			log.Write([]byte(s))
+
+			return
+		}
+
+		connections[address_str] = connection
+
+		s := fmt.Sprintf("New TCP connection from %s\n", address_str)
+		log.Write([]byte(s))
+
+		write_native(nativeMessage{
+			Type:    "get_state",
+			Address: address_str,
+		})
+
+		go server_receive(connection)
+	}
 }
 
 // Receive messages from existing TCP connections
 // Runs as a goroutine per-connected-client
 func server_receive(connection *net.TCPConn) {
-  address_str := connection.RemoteAddr().String()
+	address_str := connection.RemoteAddr().String()
 
-  for {
-    buf := make([]byte, 1024)
-    buf_len, err := connection.Read(buf)
+	for {
+		buf := make([]byte, 1024)
+		buf_len, err := connection.Read(buf)
 
-    if err != nil {
-      if err == io.EOF {
-        server_drop(address_str, "connection closed", err.Error())
-      } else {
-        server_drop(address_str, "unable to read from socket, closing", err.Error())
-      }
-      return
-    }
+		if err != nil {
+			if err == io.EOF {
+				server_drop(address_str, "connection closed", err.Error())
+			} else {
+				server_drop(address_str, "unable to read from socket, closing", err.Error())
+			}
+			return
+		}
 
-    write_native(nativeMessage{
-      Type: "command",
-      Data: string(buf[:buf_len]),
-    })
-  }
+		write_native(nativeMessage{
+			Type: "command",
+			Data: string(buf[:buf_len]),
+		})
+	}
 }
 
 // Send a message via TCP to it's given address
 func server_send(msg nativeMessage) {
 
-  for address, connection := range connections {
+	for address, connection := range connections {
 
-    _, err := connection.Write([]byte(msg.Data.([]byte)))
+		_, err := connection.Write([]byte(msg.Data.([]byte)))
 
-    if err != nil {
-      server_drop(connection.RemoteAddr().String(), "unable to write to socket, closing", err.Error())
-    }
+		if err != nil {
+			server_drop(connection.RemoteAddr().String(), "unable to write to socket, closing", err.Error())
+		}
 
-    s := fmt.Sprintf("Sent TCP message to %s, message: %s\n", address, msg.Data.(string))
-    log.Write([]byte(s))
-  }
+		s := fmt.Sprintf("Sent TCP message to %s, message: %s\n", address, msg.Data.(string))
+		log.Write([]byte(s))
+	}
 }
 
 // Drop a given existing TCP connection
 func server_drop(address_str string, message string, error_str string) {
-  connection, found := connections[address_str]
+	connection, found := connections[address_str]
 
-  if !found {
-    return
-  }
+	if !found {
+		return
+	}
 
-  s := fmt.Sprintf("Dropping connection for %s, message: %s\n", address_str, message)
-  log.Write([]byte(s))
+	s := fmt.Sprintf("Dropping connection for %s, message: %s\n", address_str, message)
+	log.Write([]byte(s))
 
-  defer connection.Close()
-  delete(connections, address_str)
+	defer connection.Close()
+	delete(connections, address_str)
 }

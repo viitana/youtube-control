@@ -8,17 +8,38 @@ const updateStatus = video => {
   console.log(`Received update for video ID ${video.id}, new state`, videos)
 }
 
+const handleMessage = msg => {
+  switch (msg.type) {
+    case "update":
+      updateStatus(msg.video)
+  }
+}
+
 chrome.runtime.onConnect.addListener(port => {
   port.onMessage.addListener(msg => {
-    if (msg.type == "update") updateStatus(msg.video)
+    handleMessage(msg)
   });
 });
+
+
 
 console.log("Opening native messaging port")
 const server = chrome.runtime.connectNative('net.viitana.youtubecontrolserver');
 
+const handleNativeMessage = msg => {
+  switch (msg.type) {
+    case "get_state":
+      server.postMessage({
+        type: msg.type,
+        data: videos,
+        address: msg.address,
+      })
+  }
+}
+
 server.onMessage.addListener(msg => {
-  console.log("Received native message:" + msg);
+  console.log("Received native message:", msg);
+  handleNativeMessage(msg)
 });
 
 server.onDisconnect.addListener(() => {
@@ -28,5 +49,5 @@ server.onDisconnect.addListener(() => {
 // Send ititial message
 server.postMessage({
   type: "init",
-  data: "localhost:2277",
+  data: "0.0.0.0:2277",
 });
