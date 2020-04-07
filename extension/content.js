@@ -47,13 +47,9 @@ const start = evt => {
     });
 
     video.addEventListener("seeked", evt => postUpdate)
-
     video.addEventListener("pause", evt => postUpdate)
-
     video.addEventListener("play", postUpdate)
-
     video.addEventListener("playing", postUpdate)
-
     video.addEventListener("seeked", postUpdate)
   }
 }
