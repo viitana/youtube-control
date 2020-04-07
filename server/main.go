@@ -11,7 +11,7 @@ import (
 )
 
 const debug = true
-const local_only = true
+const local_only = false
 
 var log = map[bool]io.Writer{
 	true:  os.Stderr,
@@ -55,13 +55,13 @@ func read_native() (nativeMessage, error) {
 	message_bytes := make([]byte, msg_len)
 	size, err := os.Stdin.Read(message_bytes)
 
-	s := fmt.Sprintf("Received native message:\n%s\n", string(message_bytes))
-	log.Write([]byte(s))
-
 	if err != nil || size != int(msg_len) {
 		log.Write([]byte("Unable to read message or size mismatch\n"))
 		return msg, fmt.Errorf("Unable to read message or size mismatch: %s", string(message_bytes))
 	}
+
+	s := fmt.Sprintf("Received native message:\n%s\n", string(message_bytes))
+	log.Write([]byte(s))
 
 	err = json.Unmarshal(message_bytes, &msg)
 
@@ -81,8 +81,6 @@ func main() {
 	if err != nil || msg.Type != "init" {
 		os.Exit(0)
 	}
-
-	//time.Sleep(2 * time.Second)
 
 	err = create_server(msg.Data.(string))
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -65,7 +67,7 @@ func create_server(address_str string) error {
 		return fmt.Errorf("Unable to create socket: %s", address_str)
 	}
 
-	s := fmt.Sprintf("Listening TCP on %s\n", address_str)
+	s := fmt.Sprintf("Listening for TCP traffic on %s\n", address_str)
 	log.Write([]byte(s))
 
 	defer socket.Close()
@@ -88,13 +90,14 @@ func receive_native() error {
 
 		switch msg.Type {
 		case "update":
+			log.Write([]byte("Matched 'update'\n"))
 			server_send(msg)
 			break
 		case "close":
 			if !should_close {
 				should_close = true
 			}
-			return fmt.Errorf("Received close message: %s", msg.Data.(string))
+			return errors.New("Received close message.")
 		}
 	}
 }
@@ -102,7 +105,7 @@ func receive_native() error {
 // Receive incoming TCP connections
 // Runs as a goroutine per-server
 func server_accept() {
-	log.Write([]byte("Accepting TCP connections\n"))
+	log.Write([]byte("Started accepting TCP connections\n"))
 
 	for {
 		connection, err := socket.AcceptTCP()
@@ -120,6 +123,7 @@ func server_accept() {
 			s := fmt.Sprintf("Ignored public TCP connection from %s\n", address_str)
 			log.Write([]byte(s))
 
+			connection.Close()
 			return
 		}
 
@@ -164,16 +168,24 @@ func server_receive(connection *net.TCPConn) {
 
 // Send a message via TCP to it's given address
 func server_send(msg nativeMessage) {
+	b, err := json.Marshal(msg)
+
+	if err != nil {
+		s := fmt.Sprintf("err marshaling %s\n", err.Error())
+		log.Write([]byte(s))
+	}
+
+	s := fmt.Sprintf("marhaled: %s\n", string(b))
+	log.Write([]byte(s))
 
 	for address, connection := range connections {
-
-		_, err := connection.Write([]byte(msg.Data.([]byte)))
+		_, err = connection.Write([]byte((string(b) + "\n")))
 
 		if err != nil {
 			server_drop(connection.RemoteAddr().String(), "unable to write to socket, closing", err.Error())
 		}
 
-		s := fmt.Sprintf("Sent TCP message to %s, message: %s\n", address, msg.Data.(string))
+		s = fmt.Sprintf("Sent TCP message '%s' to %s\n", string(b), address)
 		log.Write([]byte(s))
 	}
 }
