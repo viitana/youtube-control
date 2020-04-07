@@ -1,9 +1,10 @@
-
 const videos = {}
+const tabs = {}
 
 console.log("Opening native messaging port")
 const server = chrome.runtime.connectNative('net.viitana.youtubecontrolserver');
 
+// Client requesting update
 const handleNativeMessage = msg => {
   switch (msg.type) {
     case "get_state":
@@ -11,6 +12,7 @@ const handleNativeMessage = msg => {
         type: "update",
         data: videos,
         address: msg.address,
+        timestamp: new Date().getTime(),
       }
       console.log("sending to server:", nativemsg)
       server.postMessage(nativemsg)
@@ -32,26 +34,40 @@ server.postMessage({
   data: "0.0.0.0:2277",
 });
 
-const updateStatus = video => {
-  if (videos[video.id] == null) videos[video.id] = video
-  else Object.assign(videos[video.id], video)
-  console.log(`Received update for video ID ${video.id}, new state:`, videos)
+const updateStatus = (msg, tabID) => {
+  if (videos[tabID] == null) videos[tabID] = msg.video
+  else Object.assign(videos[tabID], msg.video)
+  console.log(`Received update from tab ID ${tabID} (${msg.video.id}), new state:`, videos)
 }
 
-const handleMessage = msg => {
+const handleMessage = (msg, tabID) => {
   switch (msg.type) {
     case "update":
-      updateStatus(msg.video)
+      updateStatus(msg, tabID)
       server.postMessage({
         type: "update",
         data: videos,
+        timestamp: new Date().getTime(),
       })
   }
 }
 
 chrome.runtime.onConnect.addListener(port => {
-  port.onMessage.addListener((msg, sender, sendResPonse) => {
-    console.log(msg, sender, sendResPonse)
-    handleMessage(msg, port)
+  // Tab has sent update
+  port.onMessage.addListener((msg, senderInfo, sendResPonse) => {
+    console.log(msg, senderInfo, sendResPonse)
+    handleMessage(msg, senderInfo.sender.tab.id)
   });
 });
+
+// Tab closed
+chrome.tabs.onRemoved.addListener(id => {
+  if (videos[id]) {
+    delete videos[id]
+    server.postMessage({
+      type: "update",
+      data: videos,
+      timestamp: new Date().getTime(),
+    })
+  }
+})

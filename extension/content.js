@@ -6,15 +6,33 @@ const id_re = /watch\?v=(.{11})/
 const id_re_result = document.location.href.match(id_re)
 const id = id_re_result.length > 1 ? id_re_result[1] : ""
 
+// Update background on current video status
+const postUpdate = overrides => {
+  const baseInfo = {
+    id: id,
+    current_timestamp: new Date().getTime(),
+    url: document.location.href,
+
+    title: document.title.slice(0, -10),
+    duration: video.duration,
+    current: video.currentTime,
+    muted: video.muted,
+    paused: video.paused,
+    ended: video.ended,
+  }
+  bgScriptPort.postMessage({
+    type: "update",
+    video: baseInfo,
+  })
+}
+
 const start = evt => {
   video = document.querySelector('video');
 
   var doc_title_elem = document.querySelector('title');
   
   if (doc_title_elem != null) {
-    var observer = new MutationObserver( mutations => {
-      handleTitleChange(mutations[0].target.text)
-    });
+    var observer = new MutationObserver(postUpdate);
     observer.observe(doc_title_elem,  { childList: true });
   }
   
@@ -22,35 +40,21 @@ const start = evt => {
     console.log(`Opening port "${id} to background script"`)
     bgScriptPort = chrome.runtime.connect({ name: id });
 
-    bgScriptPort.postMessage({
-      type: "update",
-      video:{
-        id: id,
-        duration: video.duration,
-        current: video.currentTime,
-        muted: video.muted,
-        paused: video.paused,
-        ended: video.ended,
-        url: document.location.href,
-      },
-    });
+    postUpdate()
 
     bgScriptPort.onMessage.addListener(msg => {
       console.log("Received background script message:", msg)
     });
-  }
-}
 
-const handleTitleChange = newTitle => {
-  if (bgScriptPort != null && newTitle != null && newTitle.length > 6) {
-    console.log("Sending title update: ", newTitle)
-    bgScriptPort.postMessage({
-      type: "update",
-      video:{
-        id: id,
-        title: newTitle,
-      }
-    })
+    video.addEventListener("seeked", evt => postUpdate)
+
+    video.addEventListener("pause", evt => postUpdate)
+
+    video.addEventListener("play", postUpdate)
+
+    video.addEventListener("playing", postUpdate)
+
+    video.addEventListener("seeked", postUpdate)
   }
 }
 

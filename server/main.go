@@ -19,9 +19,10 @@ var log = map[bool]io.Writer{
 }[debug]
 
 type nativeMessage struct {
-	Type    string      `json:"type"`
-	Data    interface{} `json:"data"`
-	Address string      `json:"address"`
+	Type      string      `json:"type"`
+	Data      interface{} `json:"data"`
+	Address   string      `json:"address"`
+	Timestamp uint64      `json:"timestamp"`
 }
 
 func write_native(msg nativeMessage) error {
