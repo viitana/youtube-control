@@ -159,10 +159,15 @@ func server_receive(connection *net.TCPConn) {
 			return
 		}
 
-		write_native(nativeMessage{
-			Type: "command",
-			Data: string(buf[:buf_len]),
-		})
+		msg := nativeMessage{}
+		json.Unmarshal(buf[:buf_len], &msg)
+
+		if err != nil {
+			log.Write([]byte("Unable to unmarshal message\n"))
+			return
+		}
+
+		write_native(nativeMessage(msg))
 	}
 }
 

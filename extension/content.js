@@ -18,12 +18,12 @@ const postUpdate = overrides => {
     type: "update",
     video: {
       id: id,
-      current_timestamp: new Date().getTime(),
+      currentTimeStamp: new Date().getTime(),
       url: document.location.href,
   
       //title: document.title.slice(0, -10),
       duration: video.duration,
-      current: video.currentTime,
+      currentTime: video.currentTime,
       muted: video.muted,
       paused: video.paused,
       ended: video.ended,
@@ -38,6 +38,21 @@ const postUpdate = overrides => {
 const forcePostUpdate = () => {
   refreshID()
   postUpdate({ force: true })
+}
+
+const applyProperty = (property, value) => {
+  if (video) {
+    video[property] = value
+  }
+}
+
+const handleMessage = msg => {
+  if (msg.type == "command") {
+    console.log("Command received:", msg.command)
+    for (const [property, value] of Object.entries(msg.command)) {
+      applyProperty(property, value)
+    }
+  }
 }
 
 // Ran when document is ready
@@ -62,6 +77,7 @@ const start = evt => {
 
     backgroundPort.onMessage.addListener(msg => {
       console.log("Received background script message:", msg)
+      handleMessage(msg)
     });
   }
 }

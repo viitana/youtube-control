@@ -32,10 +32,22 @@ const postToNativeHost = overrides => {
   var data = {
     type: "update",
     data: videos,
-    timestamp: new Date().getTime(),
+    timeStamp: new Date().getTime(),
   }
   if (overrides) data = Object.assign(data, overrides)
   server.postMessage(data)
+}
+
+// Send out control commands given by a client
+const applyControl = commands => {
+  for (const [tabID, command] of Object.entries(commands)) {
+    if (tabs[tabID]) {
+      tabs[tabID].postMessage({
+        type: "command",
+        command: command
+      })
+    }
+  }
 }
 
 // Client requesting update
@@ -43,6 +55,9 @@ const handleNativeMessage = msg => {
   switch (msg.type) {
     case "get_state":
       postToNativeHost({ address: msg.address })
+      break
+    case "control":
+      applyControl(msg.data)
   }
 }
 
@@ -75,10 +90,11 @@ const fetchDetails = (msg, tabID) => {
       updateStatus({
         video: {
           id: data.videoDetails.videoId,
+          tabId: tabID,
           title: data.videoDetails.title.replace(/\+/g, ' '),
-          rating: data.videoDetails.averageRating,
-          viewcount: data.videoDetails.viewCount,
-          channel: data.videoDetails.author,
+          averageRating: data.videoDetails.averageRating,
+          viewCount: data.videoDetails.viewCount,
+          author: data.videoDetails.author.replace(/\+/g, ' '),
           thumbnails: data.videoDetails.thumbnail.thumbnails,
         }
       }, tabID)
@@ -101,7 +117,7 @@ const updateStatus = (msg, tabID) => {
   if (!details[tabID]) {
     fetchDetails(msg, tabID)
   }
-  
+
   if (msg.video.title) console.log(`Detail update for tab ID ${tabID} (${msg.video.id}), fetching details: ${!Boolean(details[tabID])}, title ${msg.video.title}, new state:`, videos)
   else console.log(`Normal update for tab ID ${tabID} (${msg.video.id}), fetching details: ${!Boolean(details[tabID])}, new state:`, videos)
 }
@@ -116,6 +132,7 @@ const handleMessage = (msg, tabID) => {
 
 // Add listeners to any connecting tabs
 chrome.runtime.onConnect.addListener(port => {
+  tabs[port.sender.tab.id] = port
   port.onMessage.addListener((msg, senderInfo, sendResPonse) => {
     handleMessage(msg, senderInfo.sender.tab.id)
   });
@@ -124,8 +141,9 @@ chrome.runtime.onConnect.addListener(port => {
 // Remove video state data when a tab closes
 chrome.tabs.onRemoved.addListener(tabID => {
   if (videos[tabID]) {
-    delete videos[tabID]
     delete details[tabID]
+    delete videos[tabID]
+    delete tabs[tabID]
     postToNativeHost()
   }
 })
