@@ -2,9 +2,10 @@ const videos = {}
 const tabs = {}
 const details = {}
 
+// API endpoint for video details
 const getDetailsURL = id => `http://www.youtube.com/get_video_info?video_id=${id}`
 
-
+// Process querystrings from video details API response to a dict
 const parseQueryStrings = data => {
   var mapping = {};
 	data.split('&').forEach(function(entry) {
@@ -15,27 +16,33 @@ const parseQueryStrings = data => {
 	return mapping;
 };
 
+// Prosess and parse a video details API response
 const parseVideoDetails = raw => {
   data = parseQueryStrings(raw);
   if (!data || !data.player_response) return null
   return obj = JSON.parse(data.player_response)
 }
 
+// Start up & launch native messaging host (server)
 console.log("Opening native messaging port")
 const server = chrome.runtime.connectNative('net.viitana.youtubecontrolserver');
+
+// Send out current video state information to native host
+const postToNativeHost = overrides => {
+  var data = {
+    type: "update",
+    data: videos,
+    timestamp: new Date().getTime(),
+  }
+  if (overrides) data = Object.assign(data, overrides)
+  server.postMessage(data)
+}
 
 // Client requesting update
 const handleNativeMessage = msg => {
   switch (msg.type) {
     case "get_state":
-      const nativemsg = {
-        type: "update",
-        data: videos,
-        address: msg.address,
-        timestamp: new Date().getTime(),
-      }
-      console.log("sending to server:", nativemsg)
-      server.postMessage(nativemsg)
+      postToNativeHost({ address: msg.address })
   }
 }
 
@@ -45,77 +52,80 @@ server.onMessage.addListener(msg => {
 });
 
 server.onDisconnect.addListener(() => {
-  console.log("Disconnected server");
+  console.log("Native host disconnected.");
 });
 
-// Send ititial message
+// Send an itit message to native host
 server.postMessage({
   type: "init",
   data: "0.0.0.0:2277",
 });
 
+// Queue an API request for additional video information
 const fetchDetails = (msg, tabID) => {
   var xhr = new XMLHttpRequest();
   xhr.open("GET", getDetailsURL(msg.video.id), true);
   xhr.onreadystatechange = () => {
     if (xhr.readyState == 4) {
-      const details = parseVideoDetails(xhr.response)
-      if (details == null) return
+      // When done, update video state & post an update to native host
+      const data = parseVideoDetails(xhr.response)
+      if (data == null) return
+      details[tabID] = true
 
       updateStatus({
         video: {
-          title: details.videoDetails.title.replace(/\+/g, ' '),
-          rating: details.videoDetails.averageRating,
-          viewcount: details.videoDetails.viewCount,
-          channel: details.videoDetails.author,
-          thumbnails: details.videoDetails.thumbnail.thumbnails,
+          id: data.videoDetails.videoId,
+          title: data.videoDetails.title.replace(/\+/g, ' '),
+          rating: data.videoDetails.averageRating,
+          viewcount: data.videoDetails.viewCount,
+          channel: data.videoDetails.author,
+          thumbnails: data.videoDetails.thumbnail.thumbnails,
         }
       }, tabID)
-
-      details[tabID] = true
+      postToNativeHost()
     }
   }
   xhr.send();
 }
 
 const updateStatus = (msg, tabID) => {
+  if (msg.force) {
+    console.log("Force reset for tab " + tabID)
+    delete videos[tabID]
+    delete details[tabID]
+  }
+
   if (videos[tabID] == null) videos[tabID] = msg.video
-  else Object.assign(videos[tabID], msg.video)
+  else videos[tabID] = Object.assign(videos[tabID], msg.video)
 
   if (!details[tabID]) {
     fetchDetails(msg, tabID)
   }
-  console.log(`Received update from tab ID ${tabID} (${msg.video.id}), fetching details: ${!Boolean(details[tabID])}, new state:`, videos)
+  
+  if (msg.video.title) console.log(`Detail update for tab ID ${tabID} (${msg.video.id}), fetching details: ${!Boolean(details[tabID])}, title ${msg.video.title}, new state:`, videos)
+  else console.log(`Normal update for tab ID ${tabID} (${msg.video.id}), fetching details: ${!Boolean(details[tabID])}, new state:`, videos)
 }
 
+// Respond to a tab message
 const handleMessage = (msg, tabID) => {
-  switch (msg.type) {
-    case "update":
-      updateStatus(msg, tabID)
-      server.postMessage({
-        type: "update",
-        data: videos,
-        timestamp: new Date().getTime(),
-      })
+  if (msg.type == "update") {
+    updateStatus(msg, tabID)
+    postToNativeHost()
   }
 }
 
+// Add listeners to any connecting tabs
 chrome.runtime.onConnect.addListener(port => {
-  // Tab has sent update
   port.onMessage.addListener((msg, senderInfo, sendResPonse) => {
     handleMessage(msg, senderInfo.sender.tab.id)
   });
 });
 
-// Tab closed
-chrome.tabs.onRemoved.addListener(id => {
-  if (videos[id]) {
-    delete videos[id]
-    delete details[id]
-    server.postMessage({
-      type: "update",
-      data: videos,
-      timestamp: new Date().getTime(),
-    })
+// Remove video state data when a tab closes
+chrome.tabs.onRemoved.addListener(tabID => {
+  if (videos[tabID]) {
+    delete videos[tabID]
+    delete details[tabID]
+    postToNativeHost()
   }
 })
